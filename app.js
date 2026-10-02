@@ -22,6 +22,8 @@ const FIELD_DEFS = [
   { key: "customerRepairNo", label: "客戶維修單號", type: "input" },
   { key: "problem", label: "故障現象", type: "textarea" },
   { key: "inspection", label: "檢測說明", type: "textarea" },
+  { key: "partNumbers", label: "料號", type: "textarea" },
+  { key: "unitPrices", label: "單價", type: "textarea" },
   { key: "products", label: "品名", type: "textarea" }
 ];
 
@@ -46,6 +48,8 @@ function emptyFields() {
     customerRepairNo: "",
     problem: "",
     inspection: "",
+    partNumbers: "",
+    unitPrices: "",
     products: ""
   };
 }
@@ -385,29 +389,73 @@ function parseQuotation(text) {
    * 9. 品名
    */
   const productNames = [];
+const partNumbers = [];
+const unitPrices = [];
 
-  const lines = normalized
-    .split("\n")
-    .map(x => x.trim())
-    .filter(Boolean);
+const lines = normalized
+  .split("\n")
+  .map(x => x.trim())
+  .filter(Boolean);
 
-  for (const line of lines) {
-    const m = line.match(
-      /^\s*\d+\s+([A-Z0-9.-]+)\s+(.+?)\s+(?:EA|PCS|SET|個|件)\s+\d+(?:\s+[\d,]+)?(?:\s+[\d,]+)?\s*$/i
-    );
+for (const line of lines) {
+  /*
+   * 產品列格式：
+   *
+   * 1 620079G. 上蓋模組 EA 1 3,060 3,060
+   *
+   * 2 401661G.SRP 玻璃保護貼 EA 1 250 250
+   *
+   * 3 1400-900072G. 厚電池 EA 1 1,800 1,800
+   *
+   * 4 BENCH SERVICE. 庫內維修 EA 1 1,000 1,000
+   */
 
-    if (m) {
-      const name = cleanValue(m[2]);
+  const m = line.match(
+    /^\s*\d+\s+((?:[A-Z0-9._-]+(?:\s+|$))+?)([\u3400-\u4dbf\u4e00-\u9fff].+?)\s+(EA|PCS|SET|個|件)\s+\d+\s+([\d,]+(?:\.\d+)?)\s+[\d,]+(?:\.\d+)?\s*$/i
+  );
 
-      if (
-        name &&
-        !/^(品名|單位|數量|單價|金額)$/i.test(name)
-      ) {
-        productNames.push(name);
-      }
+  if (m) {
+    /*
+     * 料號
+     * 最後面的 "." 自動刪除
+     *
+     * 620079G.       → 620079G
+     * 1400-900072G.  → 1400-900072G
+     * 401661G.SRP    → 401661G.SRP
+     * BENCH SERVICE. → BENCH SERVICE
+     */
+    const partNumber = cleanValue(m[1])
+      .replace(/\.+$/, "")
+      .trim();
+
+    /*
+     * 品名
+     */
+    const name = cleanProductName(m[2]);
+
+    /*
+     * 單價
+     *
+     * 保留千分位：
+     * 3060 → 3,060
+     */
+    const unitPrice = m[4]
+      .replace(/,/g, "")
+      .trim();
+
+    if (
+      partNumber &&
+      name &&
+      !/^(品名|單位|數量|單價|金額)$/i.test(name)
+    ) {
+      partNumbers.push(partNumber);
+      unitPrices.push(
+        Number(unitPrice).toLocaleString("en-US")
+      );
+      productNames.push(name);
     }
   }
-
+}
   /*
    * 10. 品名備援
    */
@@ -426,11 +474,17 @@ function parseQuotation(text) {
     }
   }
 
-  fields.products = [
-    ...new Set(productNames)
-  ].join("\n");
+  fields.partNumbers = [
+  ...new Set(partNumbers)
+].join("\n");
 
-  return fields;
+fields.unitPrices = unitPrices.join("\n");
+
+fields.products = [
+  ...new Set(productNames)
+].join("\n");
+
+return fields;
 }
 
 function renderFields() {
