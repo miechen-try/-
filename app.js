@@ -113,6 +113,16 @@ function cleanSingleLine(value) {
     .replace(/[ \t]+/g, " ")
     .trim();
 }
+function cleanProductName(value) {
+  if (!value) return "";
+
+  return value
+    .replace(/\u00a0/g, " ")
+    .replace(/\r?\n/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/_+\s*$/g, "")
+    .trim();
+}
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
