@@ -65,12 +65,29 @@ function setStatus(text) {
 }
 
 function normalizeText(text) {
-  return text
+  let normalized = text
     .replace(/\u00a0/g, " ")
     .replace(/\r/g, "")
     .replace(/[ \t]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+
+  // PDF 文字擷取可能把中文欄位拆成：
+  // 「聯 絡 人」、「故 障 現 象」、「檢 測 說 明」
+  // 把中文字之間不必要的空白移除
+  let previous;
+
+  do {
+    previous = normalized;
+
+    normalized = normalized.replace(
+      /([\u3400-\u4dbf\u4e00-\u9fff])\s+(?=[\u3400-\u4dbf\u4e00-\u9fff])/g,
+      "$1"
+    );
+
+  } while (normalized !== previous);
+
+  return normalized;
 }
 
 function cleanValue(value) {
@@ -113,9 +130,9 @@ function parseQuotation(text) {
   const fields = emptyFields();
 
   fields.contact = firstMatch(normalized, [
-    /聯絡人\s*[:：]\s*([^\n]+)/i,
-    /聯絡人\s+([^\n]+)/i
-  ]);
+  /聯絡人\s*[:：]\s*(.*?)(?=\s+報價日期\s*[:：]?)/i,
+  /聯絡人\s*[:：]\s*(.*?)(?=\s+(?:統一編號|公司地址|承辦人員|公司電話)\s*[:：]?)/i
+]);
 
   fields.srNumber = firstMatch(normalized, [
     /SR\s*單號\s*[:：]\s*([A-Z0-9-]+)/i,
@@ -355,8 +372,8 @@ async function extractPdfText(pdf) {
     const content = await page.getTextContent();
 
     const pageText = content.items
-      .map(item => item.str || "")
-      .join(" ");
+  .map(item => `${item.str || ""}${item.hasEOL ? "\n" : " "}`)
+  .join("");
 
     allText += `\n--- 第 ${pageNo} 頁 ---\n${pageText}\n`;
   }
