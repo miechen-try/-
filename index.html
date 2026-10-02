@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="PDF 維修單自動判讀工具">
+  <title>PDF 維修單自動判讀工具</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>PDF 維修單自動判讀工具</h1>
+      <p>上傳 PDF → 自動擷取指定欄位 → 可直接修正 → 複製 / 下載 TXT</p>
+    </div>
+    <div class="status-pill" id="statusPill">尚未載入</div>
+  </header>
+
+  <main class="container">
+    <section class="upload-card" id="dropZone">
+      <div class="upload-icon">📄</div>
+      <h2>拖曳 PDF 到這裡</h2>
+      <p>或選擇 PDF 檔案。文字型 PDF 會直接擷取；掃描型 PDF 會自動嘗試 OCR。</p>
+      <input id="pdfInput" type="file" accept="application/pdf,.pdf" multiple hidden>
+      <button class="primary-btn" id="chooseBtn" type="button">選擇 PDF</button>
+      <div class="drop-hint">支援多檔案・瀏覽器本機處理</div>
+    </section>
+
+    <section class="toolbar hidden" id="toolbar">
+      <div class="file-info">
+        <strong id="fileName">—</strong>
+        <span id="fileMeta">—</span>
+      </div>
+      <div class="toolbar-actions">
+        <button class="secondary-btn" id="copyBtn" type="button">📋 複製結果</button>
+        <button class="secondary-btn" id="downloadBtn" type="button">💾 下載 TXT</button>
+        <button class="secondary-btn danger-btn" id="clearBtn" type="button">清除</button>
+      </div>
+    </section>
+
+    <div class="workspace hidden" id="workspace">
+      <section class="preview-panel card">
+        <div class="section-title">
+          <div>
+            <h2>PDF 預覽</h2>
+            <span id="pageLabel">第 1 / 1 頁</span>
+          </div>
+          <div class="page-controls">
+            <button id="prevPageBtn" type="button">‹</button>
+            <button id="nextPageBtn" type="button">›</button>
+          </div>
+        </div>
+        <div class="pdf-viewer" id="pdfViewer">
+          <canvas id="pdfCanvas"></canvas>
+          <div class="viewer-empty" id="viewerEmpty">尚未載入 PDF</div>
+        </div>
+      </section>
+
+      <section class="result-panel card">
+        <div class="section-title">
+          <div>
+            <h2>判讀結果</h2>
+            <span>所有欄位均可直接修改</span>
+          </div>
+          <span class="confidence" id="confidenceBadge">待判讀</span>
+        </div>
+
+        <div id="resultFields"></div>
+
+        <div class="raw-toggle">
+          <button class="text-btn" id="rawToggleBtn" type="button">顯示 / 隱藏原始文字</button>
+        </div>
+        <pre class="raw-text hidden" id="rawText"></pre>
+      </section>
+    </div>
+
+    <section class="batch-card card hidden" id="batchCard">
+      <div class="section-title">
+        <div>
+          <h2>檔案清單</h2>
+          <span>可選擇要編輯的檔案</span>
+        </div>
+      </div>
+      <div id="fileList"></div>
+    </section>
+
+    <section class="help-card card">
+      <h2>判讀欄位</h2>
+      <div class="field-tags">
+        <span>聯絡人</span>
+        <span>SR單號</span>
+        <span>機器型號</span>
+        <span>序號</span>
+        <span>客戶維修單號</span>
+        <span>故障現象</span>
+        <span>檢測說明</span>
+        <span>品名</span>
+      </div>
+      <p class="privacy-note">🔒 PDF 預設在你的瀏覽器中處理，不會自動上傳到本網站伺服器。</p>
+    </section>
+  </main>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs" type="module"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
