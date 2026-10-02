@@ -435,11 +435,22 @@ function renderFields() {
     label.className = "field-label";
     label.textContent = def.label;
 
-    const el = document.createElement(def.type === "textarea" ? "textarea" : "input");
-    el.className = def.type === "textarea" ? "field-textarea" : "field-input";
-    el.id = `field-${def.key}`;
-    el.value = state.fields[def.key] || "";
-    el.dataset.key = def.key;
+    const el = document.createElement(
+  def.type === "textarea" ? "textarea" : "input"
+);
+
+el.className =
+  def.type === "textarea"
+    ? "field-textarea"
+    : "field-input";
+
+el.id = `field-${def.key}`;
+el.value = state.fields[def.key] || "";
+el.dataset.key = def.key;
+
+if (def.type === "textarea") {
+  el.wrap = "off";
+}
 
     el.addEventListener("input", () => {
       state.fields[def.key] = el.value;
