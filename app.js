@@ -72,20 +72,26 @@ function normalizeText(text) {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
-  // PDF 文字擷取可能把中文欄位拆成：
-  // 「聯 絡 人」、「故 障 現 象」、「檢 測 說 明」
-  // 把中文字之間不必要的空白移除
-  let previous;
+  // PDF 可能把欄位標題拆成「聯 絡 人」，
+  // 只針對已知標題還原，不要把所有中文字中間的空白都刪掉。
+  const headers = [
+    [/聯\s*絡\s*人/g, "聯絡人"],
+    [/報\s*價\s*日\s*期/g, "報價日期"],
+    [/統\s*一\s*編\s*號/g, "統一編號"],
+    [/公\s*司\s*地\s*址/g, "公司地址"],
+    [/承\s*辦\s*人\s*員/g, "承辦人員"],
+    [/公\s*司\s*電\s*話/g, "公司電話"],
+    [/SR\s*單\s*號/g, "SR單號"],
+    [/客\s*戶\s*維\s*修\s*單\s*號/g, "客戶維修單號"],
+    [/機\s*器\s*品\s*號/g, "機器品號"],
+    [/序\s*號/g, "序號"],
+    [/故\s*障\s*現\s*象/g, "故障現象"],
+    [/檢\s*測\s*說\s*明/g, "檢測說明"]
+  ];
 
-  do {
-    previous = normalized;
-
-    normalized = normalized.replace(
-      /([\u3400-\u4dbf\u4e00-\u9fff])\s+(?=[\u3400-\u4dbf\u4e00-\u9fff])/g,
-      "$1"
-    );
-
-  } while (normalized !== previous);
+  for (const [pattern, replacement] of headers) {
+    normalized = normalized.replace(pattern, replacement);
+  }
 
   return normalized;
 }
@@ -129,99 +135,204 @@ function parseQuotation(text) {
   const normalized = normalizeText(text);
   const fields = emptyFields();
 
+  /*
+   * 1. 聯絡人
+   *
+   * 不再使用「下一個標題」作為唯一判斷，
+   * 直接抓到報價日期之前。
+   */
   fields.contact = firstMatch(normalized, [
-  /聯絡人\s*[:：]\s*(.*?)(?=\s+報價日期\s*[:：]?)/i,
-  /聯絡人\s*[:：]\s*(.*?)(?=\s+(?:統一編號|公司地址|承辦人員|公司電話)\s*[:：]?)/i
-]);
-
-  fields.srNumber = firstMatch(normalized, [
-    /SR\s*單號\s*[:：]\s*([A-Z0-9-]+)/i,
-    /SR單號\s*[:：]\s*([A-Z0-9-]+)/i
-  ]);
-
-  fields.customerRepairNo = firstMatch(normalized, [
-    /客戶維修單號\s*[:：]\s*([A-Z0-9-]+)/i
+    /聯絡人\s*[:：]\s*(.*?)\s+報價日期\s*[:：]/i,
+    /聯絡人\s*[:：]\s*([^\n]+)/i
   ]);
 
   /*
-   * 範例格式：
+   * 2. SR 單號
+   */
+  fields.srNumber = firstMatch(normalized, [
+    /SR單號\s*[:：]\s*([A-Z0-9-]+)/i
+  ]);
+
+  /*
+   * 3. 客戶維修單號
+   *
+   * 原始格式：
+   * PA768-RR2606250146
+   *
+   * 只取 "-" 後面的 RR 開頭流水號。
+   */
+  fields.customerRepairNo = firstMatch(normalized, [
+    /客戶維修單號\s*[:：]\s*[A-Z0-9]+\s*-\s*(RR[A-Z0-9-]+)/i
+  ]);
+
+  /*
+   * 4. 機器型號 + 序號
+   *
+   * 例如：
    * PA768-QA6FRMDG.
    * UTA21520240227
-   *
-   * 機器型號取 PA768。
    */
-  const machineBlock = normalized.match(
-    /(?:機器品號\s*\/\s*序號|機器品號|機器型號)\s*([\s\S]{0,180})/i
+  const machineMatch = normalized.match(
+    /\b(PA\d+)-[A-Z0-9.-]+\s+([A-Z0-9][A-Z0-9._-]{5,})\b/i
   );
 
-  if (machineBlock) {
-    const block = machineBlock[1];
-    const modelMatch = block.match(/\b(PA\d+)-/i);
-    if (modelMatch) fields.model = modelMatch[1];
-
-    const serialMatch = block.match(
-      /\bPA\d+-[A-Z0-9.-]+\s+([A-Z0-9][A-Z0-9._-]{5,})\b/i
-    );
-    if (serialMatch) fields.serial = serialMatch[1];
+  if (machineMatch) {
+    fields.model = machineMatch[1];
+    fields.serial = machineMatch[2];
   }
 
+  /*
+   * 如果上面的格式沒抓到，再分開嘗試。
+   */
   if (!fields.model) {
-    const modelMatch = normalized.match(/\b(PA\d+)-[A-Z0-9.-]+/i);
-    if (modelMatch) fields.model = modelMatch[1];
+    const modelMatch = normalized.match(
+      /\b(PA\d+)-[A-Z0-9.-]+/i
+    );
+
+    if (modelMatch) {
+      fields.model = modelMatch[1];
+    }
   }
 
   if (!fields.serial) {
     const serialMatch = normalized.match(
-      /\bPA\d+-[A-Z0-9.-]+\s*\n\s*([A-Z0-9][A-Z0-9._-]{5,})\b/i
+      /\bPA\d+-[A-Z0-9.-]+\s+([A-Z0-9][A-Z0-9._-]{5,})\b/i
     );
-    if (serialMatch) fields.serial = serialMatch[1];
+
+    if (serialMatch) {
+      fields.serial = serialMatch[1];
+    }
   }
 
   /*
-   * 故障現象與檢測說明：
-   * 這裡使用標題邊界，避免把後面的表格一起吃進來。
+   * 5. 故障現象 + 檢測說明
+   *
+   * 這份 PDF 是「表格」：
+   *
+   * No. | 機器品號/序號 | 故障現象 | 檢測說明
+   *  1  | PA768...      | 9/29...  | 1.上蓋...
+   *
+   * PDF.js 擷取後會把這一列的內容串在一起，
+   * 所以不能用「故障現象」→「檢測說明」的區段方式。
+   *
+   * 我們改成：
+   * 序號之後的文字
+   * → 找到第一個「1.」
+   * → 前面是故障現象
+   * → 「1.」開始是檢測說明
    */
-  fields.problem = sectionBetween(
-    normalized,
-    ["故障現象"],
-    ["檢測說明", "客戶維修單號", "客戶維修確認", "No."]
+
+  const machineRowMatch = normalized.match(
+    /(?:故障現象\s+檢測說明|故障現象\s*檢測說明)\s+([\s\S]*?)(?=客戶維修單號)/i
   );
 
-  fields.inspection = sectionBetween(
-    normalized,
-    ["檢測說明"],
-    ["客戶維修單號", "客戶維修確認", "No.", "料號"]
-  );
+  if (machineRowMatch) {
+    const rowText = cleanValue(machineRowMatch[1]);
+
+    /*
+     * 找到機器序號後面的內容。
+     */
+    const serialIndex = fields.serial
+      ? rowText.indexOf(fields.serial)
+      : -1;
+
+    if (serialIndex >= 0) {
+      let afterSerial = rowText.slice(
+        serialIndex + fields.serial.length
+      ).trim();
+
+      /*
+       * 找「1.」作為檢測說明開始。
+       *
+       * 例如：
+       * 9/29 側邊全部按鈕可以使用，但螢幕無法滑動與點擊。
+       * 1.上蓋邊框多處凹陷損傷 2.電池不良 報價更換
+       */
+      const inspectionStart = afterSerial.search(
+        /(?:^|\s)1\.\s*/
+      );
+
+      if (inspectionStart >= 0) {
+        let problemText = afterSerial.slice(
+          0,
+          inspectionStart
+        );
+
+        let inspectionText = afterSerial.slice(
+          inspectionStart
+        );
+
+        /*
+         * 如果前面有空白，移掉空白，
+         * 但保留「1.」。
+         */
+        problemText = problemText.trim();
+        inspectionText = inspectionText.trim();
+
+        fields.problem = cleanValue(problemText);
+        fields.inspection = cleanValue(inspectionText);
+      } else {
+        /*
+         * 如果沒有找到 1.，
+         * 至少把剩下文字放到故障現象。
+         */
+        fields.problem = cleanValue(afterSerial);
+      }
+    }
+  }
 
   /*
-   * 品名：
-   * 從「品名」表頭之後，抓表格資料列。
-   * 優先從常見格式中抓：
-   * 料號 + 品名 + EA + 數量
+   * 6. 如果表格解析失敗，使用備援方式。
+   */
+  if (!fields.problem) {
+    fields.problem = firstMatch(normalized, [
+      /故障現象\s+檢測說明\s+[\s\S]*?\s(9\/\d+\s+.*?)(?=\s+1\.)/i
+    ]);
+  }
+
+  if (!fields.inspection) {
+    fields.inspection = firstMatch(normalized, [
+      /故障現象\s+檢測說明\s+[\s\S]*?\s(1\..*?)(?=\s+客戶維修單號)/i
+    ]);
+  }
+
+  /*
+   * 7. 品名
    */
   const productNames = [];
-  const lines = normalized.split("\n").map(x => x.trim()).filter(Boolean);
+  const lines = normalized
+    .split("\n")
+    .map(x => x.trim())
+    .filter(Boolean);
 
   for (const line of lines) {
     const m = line.match(
       /^\s*\d+\s+([A-Z0-9.-]+)\s+(.+?)\s+(?:EA|PCS|SET|個|件)\s+\d+(?:\s+[\d,]+)?(?:\s+[\d,]+)?\s*$/i
     );
+
     if (m) {
       const name = cleanValue(m[2]);
-      if (name && !/^(品名|單位|數量|單價|金額)$/i.test(name)) {
+
+      if (
+        name &&
+        !/^(品名|單位|數量|單價|金額)$/i.test(name)
+      ) {
         productNames.push(name);
       }
     }
   }
 
   /*
-   * 如果 PDF 文字排序讓整列被拆開，再用固定的料號樣式 + 後續內容
-   * 做第二次嘗試。
+   * PDF 排序特殊時的備援。
    */
   if (productNames.length === 0) {
-    const tableStart = normalized.search(/料\s*號\s+品\s*名/i);
+    const tableStart = normalized.search(
+      /料\s*號\s+品\s*名/i
+    );
+
     if (tableStart >= 0) {
       const tableText = normalized.slice(tableStart);
+
       const candidates = [
         "上蓋模組",
         "玻璃保護貼",
@@ -230,12 +341,16 @@ function parseQuotation(text) {
       ];
 
       for (const name of candidates) {
-        if (tableText.includes(name)) productNames.push(name);
+        if (tableText.includes(name)) {
+          productNames.push(name);
+        }
       }
     }
   }
 
-  fields.products = [...new Set(productNames)].join("\n");
+  fields.products = [
+    ...new Set(productNames)
+  ].join("\n");
 
   return fields;
 }
