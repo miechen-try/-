@@ -104,7 +104,15 @@ function cleanValue(value) {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
+function cleanSingleLine(value) {
+  if (!value) return "";
 
+  return value
+    .replace(/\u00a0/g, " ")
+    .replace(/\r?\n/g, "")
+    .replace(/[ \t]+/g, " ")
+    .trim();
+}
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -316,13 +324,13 @@ function parseQuotation(text) {
             .indexOf("1");
         }
 
-        fields.problem = cleanValue(
-          afterSerial.slice(0, startIndex)
-        );
+        fields.problem = cleanSingleLine(
+         afterSerial.slice(0, startIndex)
+       );
 
-        fields.inspection = cleanValue(
-          afterSerial.slice(startIndex)
-        );
+        fields.inspection = cleanSingleLine(
+         afterSerial.slice(startIndex)
+       );
       } else {
         /*
          * 沒有找到 1. 時，
