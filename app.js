@@ -138,143 +138,195 @@ function parseQuotation(text) {
   /*
    * 1. 聯絡人
    *
-   * 不再使用「下一個標題」作為唯一判斷，
-   * 直接抓到報價日期之前。
+   * PDF 有可能變成：
+   * 聯絡人 : 羅東中山二 - 智取店報價日期 : 2026-10-01
+   *
+   * 也可能變成：
+   * 聯絡人 : 羅東中山二 - 智取店
+   * 報價日期 : 2026-10-01
+   *
+   * 所以直接抓「聯絡人」到「報價日期」之前，
+   * 不要求中間一定有空白或換行。
    */
   fields.contact = firstMatch(normalized, [
-    /聯絡人\s*[:：]\s*(.*?)\s+報價日期\s*[:：]/i,
-    /聯絡人\s*[:：]\s*([^\n]+)/i
+    /聯絡人\s*[:：]?\s*(.*?)\s*報價日期\s*[:：]/i
   ]);
 
   /*
-   * 2. SR 單號
+   * 如果上面仍抓不到，再從聯絡人後面抓，
+   * 並把報價日期切掉。
    */
-  fields.srNumber = firstMatch(normalized, [
-    /SR單號\s*[:：]\s*([A-Z0-9-]+)/i
-  ]);
-
-  /*
-   * 3. 客戶維修單號
-   *
-   * 原始格式：
-   * PA768-RR2606250146
-   *
-   * 只取 "-" 後面的 RR 開頭流水號。
-   */
-  fields.customerRepairNo = firstMatch(normalized, [
-    /客戶維修單號\s*[:：]\s*[A-Z0-9]+\s*-\s*(RR[A-Z0-9-]+)/i
-  ]);
-
-  /*
-   * 4. 機器型號 + 序號
-   *
-   * 例如：
-   * PA768-QA6FRMDG.
-   * UTA21520240227
-   */
-  const machineMatch = normalized.match(
-    /\b(PA\d+)-[A-Z0-9.-]+\s+([A-Z0-9][A-Z0-9._-]{5,})\b/i
-  );
-
-  if (machineMatch) {
-    fields.model = machineMatch[1];
-    fields.serial = machineMatch[2];
-  }
-
-  /*
-   * 如果上面的格式沒抓到，再分開嘗試。
-   */
-  if (!fields.model) {
-    const modelMatch = normalized.match(
-      /\b(PA\d+)-[A-Z0-9.-]+/i
+  if (!fields.contact) {
+    const contactMatch = normalized.match(
+      /聯絡人\s*[:：]?\s*(.{1,50}?)(?=報價日期|統一編號|公司地址|承辦人員|公司電話|SR單號)/i
     );
 
-    if (modelMatch) {
-      fields.model = modelMatch[1];
+    if (contactMatch) {
+      fields.contact = cleanValue(contactMatch[1]);
     }
   }
 
+  /*
+   * 2. SR單號
+   */
+  fields.srNumber = firstMatch(normalized, [
+    /SR\s*單號\s*[:：]?\s*([0-9]+)/i,
+    /SR單號\s*[:：]?\s*([A-Z0-9-]+)/i
+  ]);
+
+  /*
+   * 3. 機器型號
+   *
+   * 直接找 PA 開頭的型號。
+   * 例如 PA768-QA6FRMDG.
+   * → PA768
+   */
+  const modelMatch = normalized.match(
+    /\b(PA\d+)-[A-Z0-9.-]+/i
+  );
+
+  if (modelMatch) {
+    fields.model = modelMatch[1];
+  }
+
+  /*
+   * 4. 序號
+   *
+   * 這份 PDF 的序號格式是：
+   * UTA21520240227
+   *
+   * 不再要求它一定要緊跟在機器品號後面。
+   * 這樣可以避免 PDF 表格排序造成抓不到。
+   */
+  const serialMatch = normalized.match(
+    /\b(UTA[A-Z0-9]{6,})\b/i
+  );
+
+  if (serialMatch) {
+    fields.serial = serialMatch[1];
+  }
+
+  /*
+   * 如果未來遇到不是 UTA 開頭的序號，
+   * 再使用 PA 型號後面的第二組英數字作備援。
+   */
   if (!fields.serial) {
-    const serialMatch = normalized.match(
+    const machineMatch = normalized.match(
       /\bPA\d+-[A-Z0-9.-]+\s+([A-Z0-9][A-Z0-9._-]{5,})\b/i
     );
 
-    if (serialMatch) {
-      fields.serial = serialMatch[1];
+    if (machineMatch) {
+      fields.serial = machineMatch[1];
     }
   }
 
   /*
-   * 5. 故障現象 + 檢測說明
+   * 5. 客戶維修單號
    *
-   * 這份 PDF 是「表格」：
+   * PDF：
+   * 客戶維修單號：PA768-RR2606250146
    *
-   * No. | 機器品號/序號 | 故障現象 | 檢測說明
-   *  1  | PA768...      | 9/29...  | 1.上蓋...
+   * 只要：
+   * RR2606250146
+   */
+  fields.customerRepairNo = firstMatch(normalized, [
+    /客戶維修單號\s*[:：]?\s*[A-Z0-9]+\s*-\s*(RR[A-Z0-9-]+)/i
+  ]);
+
+  /*
+   * 備援：
+   * 直接找文件裡的 RR 開頭流水號。
+   */
+  if (!fields.customerRepairNo) {
+    const rrMatch = normalized.match(
+      /\b(RR\d{6,})\b/i
+    );
+
+    if (rrMatch) {
+      fields.customerRepairNo = rrMatch[1];
+    }
+  }
+
+  /*
+   * 6. 故障現象 / 檢測說明
    *
-   * PDF.js 擷取後會把這一列的內容串在一起，
-   * 所以不能用「故障現象」→「檢測說明」的區段方式。
+   * 這份 PDF 的表格實際內容：
    *
-   * 我們改成：
-   * 序號之後的文字
-   * → 找到第一個「1.」
-   * → 前面是故障現象
-   * → 「1.」開始是檢測說明
+   * PA768-QA6FRMDG.
+   * UTA21520240227
+   * 9/29 側邊全部按鈕可以使用，但螢幕無法滑動與點擊。
+   * 1.上蓋邊框多處凹陷損傷 2.電池不良 報價更換
+   *
+   * 因為 PDF.js 可能改變換行，
+   * 不再依賴「故障現象」和「檢測說明」的位置。
+   *
+   * 改成：
+   * 先找到序號
+   * → 往後找第一個「1.」
+   * → 1. 前面 = 故障現象
+   * → 1. 開始 = 檢測說明
    */
 
-  const machineRowMatch = normalized.match(
-    /(?:故障現象\s+檢測說明|故障現象\s*檢測說明)\s+([\s\S]*?)(?=客戶維修單號)/i
-  );
-
-  if (machineRowMatch) {
-    const rowText = cleanValue(machineRowMatch[1]);
-
-    /*
-     * 找到機器序號後面的內容。
-     */
-    const serialIndex = fields.serial
-      ? rowText.indexOf(fields.serial)
-      : -1;
+  if (fields.serial) {
+    const serialIndex = normalized.indexOf(fields.serial);
 
     if (serialIndex >= 0) {
-      let afterSerial = rowText.slice(
+      let afterSerial = normalized.slice(
         serialIndex + fields.serial.length
-      ).trim();
-
-      /*
-       * 找「1.」作為檢測說明開始。
-       *
-       * 例如：
-       * 9/29 側邊全部按鈕可以使用，但螢幕無法滑動與點擊。
-       * 1.上蓋邊框多處凹陷損傷 2.電池不良 報價更換
-       */
-      const inspectionStart = afterSerial.search(
-        /(?:^|\s)1\.\s*/
       );
 
-      if (inspectionStart >= 0) {
-        let problemText = afterSerial.slice(
-          0,
-          inspectionStart
-        );
+      /*
+       * 停在「客戶維修單號」以前，
+       * 避免抓到下面的其他文字。
+       */
+      const repairIndex = afterSerial.search(
+        /客戶維修單號/i
+      );
 
-        let inspectionText = afterSerial.slice(
-          inspectionStart
-        );
+      if (repairIndex >= 0) {
+        afterSerial = afterSerial.slice(0, repairIndex);
+      }
+
+      afterSerial = afterSerial.trim();
+
+      /*
+       * 找檢測說明的第一個「1.」
+       *
+       * 支援：
+       * 1.上蓋
+       * 1. 上蓋
+       * 空白或換行後的 1.
+       */
+      const inspectionMatch = afterSerial.match(
+        /(?:^|\s)(1\.\s*)/
+      );
+
+      if (inspectionMatch) {
+        const inspectionIndex = inspectionMatch.index;
 
         /*
-         * 如果前面有空白，移掉空白，
-         * 但保留「1.」。
+         * 如果 match 從空白開始，
+         * 把真正的「1.」位置算出來。
          */
-        problemText = problemText.trim();
-        inspectionText = inspectionText.trim();
+        let startIndex = inspectionIndex;
 
-        fields.problem = cleanValue(problemText);
-        fields.inspection = cleanValue(inspectionText);
+        if (afterSerial[startIndex] !== "1") {
+          startIndex += afterSerial
+            .slice(startIndex)
+            .indexOf("1");
+        }
+
+        fields.problem = cleanValue(
+          afterSerial.slice(0, startIndex)
+        );
+
+        fields.inspection = cleanValue(
+          afterSerial.slice(startIndex)
+        );
       } else {
         /*
-         * 如果沒有找到 1.，
-         * 至少把剩下文字放到故障現象。
+         * 沒有找到 1. 時，
+         * 整段先放故障現象。
          */
         fields.problem = cleanValue(afterSerial);
       }
@@ -282,24 +334,40 @@ function parseQuotation(text) {
   }
 
   /*
-   * 6. 如果表格解析失敗，使用備援方式。
+   * 7. 如果上面的表格方式沒有抓到，
+   * 再直接從「9/29」這類日期開始抓故障現象。
    */
   if (!fields.problem) {
-    fields.problem = firstMatch(normalized, [
-      /故障現象\s+檢測說明\s+[\s\S]*?\s(9\/\d+\s+.*?)(?=\s+1\.)/i
-    ]);
-  }
+    const problemMatch = normalized.match(
+      /\b(9\/\d{1,2}\s+.*?)(?=\s*1\.)/i
+    );
 
-  if (!fields.inspection) {
-    fields.inspection = firstMatch(normalized, [
-      /故障現象\s+檢測說明\s+[\s\S]*?\s(1\..*?)(?=\s+客戶維修單號)/i
-    ]);
+    if (problemMatch) {
+      fields.problem = cleanValue(problemMatch[1]);
+    }
   }
 
   /*
-   * 7. 品名
+   * 8. 如果檢測說明仍然沒有，
+   * 直接抓「1.」到客戶維修單號之前。
+   */
+  if (!fields.inspection) {
+    const inspectionMatch = normalized.match(
+      /(\b1\.\s*.*?)(?=\s*客戶維修單號)/i
+    );
+
+    if (inspectionMatch) {
+      fields.inspection = cleanValue(
+        inspectionMatch[1]
+      );
+    }
+  }
+
+  /*
+   * 9. 品名
    */
   const productNames = [];
+
   const lines = normalized
     .split("\n")
     .map(x => x.trim())
@@ -323,27 +391,19 @@ function parseQuotation(text) {
   }
 
   /*
-   * PDF 排序特殊時的備援。
+   * 10. 品名備援
    */
   if (productNames.length === 0) {
-    const tableStart = normalized.search(
-      /料\s*號\s+品\s*名/i
-    );
+    const candidates = [
+      "上蓋模組",
+      "玻璃保護貼",
+      "厚電池",
+      "庫內維修"
+    ];
 
-    if (tableStart >= 0) {
-      const tableText = normalized.slice(tableStart);
-
-      const candidates = [
-        "上蓋模組",
-        "玻璃保護貼",
-        "厚電池",
-        "庫內維修"
-      ];
-
-      for (const name of candidates) {
-        if (tableText.includes(name)) {
-          productNames.push(name);
-        }
+    for (const name of candidates) {
+      if (normalized.includes(name)) {
+        productNames.push(name);
       }
     }
   }
